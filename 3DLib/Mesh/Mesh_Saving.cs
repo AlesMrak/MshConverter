@@ -1,0 +1,489 @@
+using System;
+using System.Collections.Generic;
+using System.Collections;
+using System.Text;
+using System.IO;
+using System.Globalization;
+
+
+
+using Library3d.Math;
+using Library3d.Nodes;
+using Library3d.Error;
+
+
+namespace Library3d.Mesh
+{
+    public partial class MeshObject : NodeObject
+    {
+        public static bool GenerateTangentSpace = false;
+        public static void ExportMeshToOBJ(StreamWriter sw, CultureInfo ci, MeshData data, int vertexCount, int normalCount, int uvCount)
+        {
+            sw.WriteLine("g {0}", data.Name);
+
+            bool hasuv = data.UVs.Count > 0 ? true : false;
+
+
+            foreach (Vertex v in data.Vertexs)
+            {
+                JVector rpos = v.pos;
+
+                /**/
+                if (data.ParentNode != null)
+                {
+                    if (data.ObjectMatrix != null)
+                        rpos = rpos * data.ParentNode.Global * data.ObjectMatrix;
+                    else
+                        rpos = rpos * data.ParentNode.Global;
+                }
+                else if (data.ParentMeshObject != null)
+                {
+                    rpos = rpos * data.ParentMeshObject.GlobalPosition;
+                }
+                /**/
+
+                sw.WriteLine("v {0:0.########} {1:0.########} {2:0.########}", rpos.x.ToString(ci), rpos.y.ToString(ci), rpos.z.ToString(ci));
+            }
+
+            foreach (UV uv in data.UVs)
+            {
+                float u = (uv.u + MeshObject.Uoffset) * MeshObject.Uscale;
+                float v = (uv.v + MeshObject.Voffset) * MeshObject.Vscale;
+                sw.WriteLine("vt {0:0.########} {1:0.########}", u.ToString(ci), u.ToString(ci));
+            }
+
+            foreach (Vertex v in data.Vertexs)
+            {
+                JVector rpos = v.n;
+                /*
+                if (data.ParentNode != null)
+                {
+                    rpos = rpos * data.ParentNode.Global;
+                }
+                else if (data.ParentMeshObject != null)
+                {
+                    rpos = rpos * data.ParentMeshObject.GlobalPosition;
+                }
+                /**/
+                sw.WriteLine("vn {0:0.########} {1:0.########} {2:0.########}", rpos.x.ToString(ci), rpos.y.ToString(ci), rpos.z.ToString(ci));
+            }
+
+            SortedDictionary<int, Group> sortDict = new SortedDictionary<int, Group>();
+            int countIndex = 0;
+            foreach (Group g in data.Groups)
+            {
+                sortDict.Add(g.FaceStart, g);
+            }
+
+
+            countIndex = 0;
+            int add = 0;
+            foreach (Face f in data.Faces)
+            {
+                if (sortDict.ContainsKey(countIndex) == true)
+                {
+                    sw.WriteLine("usemtllib {0}", data.Materials[sortDict[countIndex].Id].Name + ".mtl");
+                    add = sortDict[countIndex].VertexStart;
+                }
+                if (hasuv == true)
+                {
+                    sw.WriteLine("f {0}/{1}/{2}  {3}/{4}/{5} {6}/{7}/{8}", add + vertexCount + f.v1 + 1, add + uvCount + f.v1 + 1, add + normalCount + f.v1 + 1,
+                                                                            add + vertexCount + f.v2 + 1, add + uvCount + f.v2 + 1, add + normalCount + f.v2 + 1,
+                                                                            add + vertexCount + f.v3 + 1, add + uvCount + f.v3 + 1, add + normalCount + f.v3 + 1);
+                }
+                else
+                {
+                    sw.WriteLine("f {0}//{1}  {2}//{3} {4}//{5}", add + vertexCount + f.v1 + 1, add + normalCount + f.v1 + 1,
+                                                                  add + vertexCount + f.v2 + 1, add + normalCount + f.v2 + 1,
+                                                                  add + vertexCount + f.v3 + 1, add + normalCount + f.v3 + 1);
+                }
+                countIndex++;
+            }
+
+
+            foreach (Material m in data.Materials)
+            {
+                StreamWriter sw2 = File.CreateText(m.Name + ".mtl");
+                sw2.WriteLine("\r\nnewmtl {0}", m.Name);
+                sw2.WriteLine("Ka 0.5 0.5 0.5");
+                sw2.WriteLine("Kd 0.5 0.5 0.5");
+                sw2.WriteLine("Ks 0.5 0.5 0.5");
+                sw2.WriteLine("illum 2");
+                sw2.WriteLine("Ns 8");
+                sw2.WriteLine("map_Kd {0}", Path.GetFileName(m.Name) + ".tga");
+                sw2.Close();
+            }
+
+        }
+
+        public static void SaveToMsh(string filename, MeshObject mesh)
+        {
+            StreamWriter msh = null;
+            if (Path.HasExtension(filename)==true)
+            {
+                msh = File.CreateText(filename);
+            }
+            else
+                msh = File.CreateText(filename+".msh");
+
+            if (msh == null) return;
+
+            msh.WriteLine("//Generated by MshReader 1.18 by Dr.Jones");
+            msh.WriteLine("");
+
+
+            ///Write common header
+            msh.WriteLine("[Common]");
+            msh.WriteLine(string.Format("NumBones {0}",mesh.Meshes.Bones.Count));
+            msh.WriteLine(" FramesType Single");
+            msh.WriteLine(" NumFrames 1");
+            msh.WriteLine("");
+
+            ///write lods distance
+            msh.WriteLine("[LOD]");
+            foreach (int val in mesh.LodsDist)
+            {
+                msh.WriteLine(val.ToString());
+            }
+            msh.WriteLine("");
+
+
+            ///write hooks
+            if (mesh.Hooks.Count > 0)
+            {
+                msh.WriteLine("[Hooks]");
+                foreach (Hook k in mesh.Hooks)
+                {
+                    msh.WriteLine(string.Format("{0} {1}", k.Name, k.Value));
+                }
+                msh.WriteLine("");
+
+                msh.WriteLine("[HookLoc]");
+                foreach (Hook k in mesh.Hooks)
+                {
+                    string val = string.Format("{0} {1} {2} {3}", k.Position.GetRow(0).ToString(), k.Position.GetRow(1).ToString(), k.Position.GetRow(2).ToString(),k.Position.Pos.ToString());
+                    msh.WriteLine(val);
+                }
+                msh.WriteLine("");
+            }
+
+
+            //// Write meshdata ///////////////
+            SaveToMsh(msh, mesh.Meshes,-1);
+
+            mesh.Lods.Sort(delegate(MeshData p1, MeshData p2) { return p1.Name.CompareTo(p2.Name); });
+
+            int lodNumber = 1;
+            foreach (MeshData lod in mesh.Lods)
+            {
+                SaveToMsh(msh, lod,lodNumber++);
+            }
+            /// write collision's
+            /// 
+            if (mesh.Collisions.Count > 0)
+            {
+                msh.WriteLine("[CoCommon]");
+                msh.WriteLine("NBlocks {0}", mesh.Collisions.Count);
+                msh.WriteLine("");
+
+                int bc = 0;
+                foreach (MeshCollisionBlock b in mesh.Collisions)
+                {
+                    msh.WriteLine("[CoCommon_b{0}]",bc);
+                    msh.WriteLine("NParts {0}", b.Parts.Count);
+                    msh.WriteLine("");
+
+                    int pc = 0;
+                    foreach (MeshCollisionPart p in b.Parts)
+                    {
+                        msh.WriteLine("[CoCommon_b{0}p{1}]", bc,pc);
+                        msh.WriteLine("Type Mesh");
+                        msh.WriteLine("NFrames {0}", p.CollisionFrames.Count);
+                        msh.WriteLine("Name {0}", p.Name);
+                        msh.WriteLine("");
+
+                        int fc = 0;
+                        foreach (MeshCollisionFrame f in p.CollisionFrames)
+                        {
+
+                            msh.WriteLine("[CoVer0_b{0}p{1}]", bc,pc);
+                            foreach (Vertex vert in f.Vertexs)
+                            {
+                                msh.WriteLine("{0}", vert.pos.ToString());
+                            }
+                            msh.WriteLine("");
+
+
+                            msh.WriteLine("[CoNeiCnt_b{0}p{1}]", bc, pc);
+
+                            foreach (FaceIndexNeight c in f.aFaceNeigh)
+                            {
+                                msh.WriteLine("{0}", c.aNeig.Count);
+                            }
+                            /*
+                            foreach (int c in f.NeigboursCounts)
+                            {
+                                msh.WriteLine("{0}", c);
+                            }
+                            /**/
+                            msh.WriteLine("");
+
+                            msh.WriteLine("[CoNei_b{0}p{1}]", bc, pc);
+
+                            foreach (FaceIndexNeight c in f.aFaceNeigh)
+                            {
+                                foreach (int a in c.aNeig)
+                                {
+                                    msh.WriteLine("{0}", a);
+                                }
+                            }
+                            /*
+                            foreach (int c in f.Neigbours)
+                            {
+                                msh.WriteLine("{0}", c);
+                            }
+                            /**/
+                            msh.WriteLine("");
+
+                            msh.WriteLine("[CoFac_b{0}p{1}]", bc, pc);
+                            foreach (Face fx in f.Faces)
+                            {
+                                msh.WriteLine("{0} {1} {2}", fx.v1,fx.v2,fx.v3);
+                            }
+                            msh.WriteLine("");
+
+                            fc++;
+                        }
+                        pc++;
+                    }
+                    bc++;
+                }
+
+            }
+
+            msh.WriteLine("");
+            msh.Write("; eof");
+            msh.Close();
+
+            ErrorMessages.Global.AddErrorMessage(string.Format("Saved {0} to {1}!\r\n", mesh.Name, filename), 2);
+        }
+
+        public static void SaveToMsh(StreamWriter msh,MeshData mesh,int lodNumber)
+        {
+            ///write materials
+            msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber,"Materials")));
+            foreach (Material k in mesh.Materials)
+            {
+                msh.WriteLine(string.Format("{0}", k.Name));
+            }
+            msh.WriteLine("");
+
+
+            ///write facegroups
+            msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "FaceGroups")));
+            msh.WriteLine("{0} {1}", mesh.Vertexs.Count, mesh.Faces.Count);
+            foreach (Group k in mesh.Groups)
+            {
+                msh.WriteLine(string.Format("{0} {1} {2} {3} {4} 0", k.Id, k.VertexStart, k.VertexCount, k.FaceStart, k.FaceCount));
+            }
+            msh.WriteLine("");
+
+
+            ///write vertices
+            msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "Vertices_Frame0")));
+            foreach (Vertex k in mesh.Vertexs)
+            {
+                msh.WriteLine(string.Format("{0} {1}", k.pos.ToString(), k.n.ToString()));
+            }
+            msh.WriteLine("");
+
+            try
+            {
+                if (mesh.TangentSpace.Count == 0 && mesh.UVs.Count > 0 && MeshObject.GenerateTangentSpace == true)
+                {
+                    SortedDictionary<int, Group> sortDict = new SortedDictionary<int, Group>();
+                    foreach (Group g in mesh.Groups)
+                    {
+                        sortDict.Add(g.FaceStart, g);
+                    }
+
+                    SortedDictionary<int, JMatrix> dict = new SortedDictionary<int, JMatrix>();
+
+                    int add = 0;
+                    int c = 0;
+                    foreach (Face f in mesh.Faces)
+                    {
+                        if (sortDict.ContainsKey(c) == true)
+                            add = sortDict[c].VertexStart;
+
+                        JVector v1 = mesh.Vertexs[f.v1].pos;
+                        JVector v2 = mesh.Vertexs[f.v2].pos;
+                        JVector v3 = mesh.Vertexs[f.v3].pos;
+
+                        JVector uv1 = new JVector(mesh.UVs[f.v1].u, mesh.UVs[f.v1].v, 0);
+                        JVector uv2 = new JVector(mesh.UVs[f.v2].u, mesh.UVs[f.v2].v, 0);
+                        JVector uv3 = new JVector(mesh.UVs[f.v3].u, mesh.UVs[f.v3].v, 0);
+
+                        if (dict.ContainsKey(add + f.v1) == false)
+                        {
+                            JVector normal = mesh.Vertexs[add + f.v1].n;
+
+                            JVector T = new JVector();
+                            JVector B = new JVector();
+
+                            CalculateTangentSpace(v1, v2, v3, uv1, uv2, uv3, ref T, ref B);
+
+                            JMatrix mat = new JMatrix();
+                            mat.RowX = T;
+                            mat.RowY = B;
+                            mat.RowZ = normal;
+
+                            dict.Add(add + f.v1, mat);
+                        }
+                        if (dict.ContainsKey(add + f.v2) == false)
+                        {
+                            JVector normal = mesh.Vertexs[add + f.v2].n;
+
+                            JVector T = new JVector();
+                            JVector B = new JVector();
+
+                            CalculateTangentSpace(v2, v1, v3, uv2, uv1, uv3, ref T, ref B);
+
+                            JMatrix mat = new JMatrix();
+                            mat.RowX = T;
+                            mat.RowY = B;
+                            mat.RowZ = normal;
+
+                            dict.Add(add + f.v2, mat);
+                        }
+
+                        if (dict.ContainsKey(add + f.v3) == false)
+                        {
+                            JVector normal = mesh.Vertexs[add + f.v3].n;
+
+                            JVector T = new JVector();
+                            JVector B = new JVector();
+
+                            CalculateTangentSpace(v3, v1, v2, uv3, uv1, uv2, ref T, ref B);
+
+                            JMatrix mat = new JMatrix();
+                            mat.RowX = T;
+                            mat.RowY = B;
+                            mat.RowZ = normal;
+
+                            dict.Add(add + f.v3, mat);
+                        }
+                        c++;
+                    }
+
+                    for (int inx = 0; inx < mesh.Vertexs.Count; inx++)
+                    {
+                        mesh.TangentSpace.Add(dict[inx]);
+                    }
+
+                }
+
+                if (mesh.TangentSpace.Count > 0)
+                {
+                    //write tangent space
+                    msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "Space_Frame0")));
+                    foreach (JMatrix k in mesh.TangentSpace)
+                    {
+                        msh.WriteLine(string.Format("{0} {1} {2}", k.RowX.ToString(), k.RowY.ToString(), k.RowZ.ToString()));
+                    }
+                    msh.WriteLine("");
+                }
+            }
+            catch (Exception e)
+            {
+                ErrorMessages.Global.AddErrorMessage(string.Format("Tangent space for {0} failed!\r\n", mesh.Name), 1);
+            }
+
+            msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "MaterialMapping")));
+            foreach (UV k in mesh.UVs)
+            {
+                float u = (k.u + MeshObject.Uoffset) * MeshObject.Uscale;
+                float v = (k.v + MeshObject.Voffset) * MeshObject.Vscale;
+                msh.WriteLine(string.Format("{0} {1}", u, v));
+            }
+            msh.WriteLine("");
+
+            msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "Faces")));
+            foreach (Face k in mesh.Faces)
+            {
+                msh.WriteLine(string.Format("{0} {1} {2}", k.v1, k.v2, k.v3));
+            }
+            msh.WriteLine("");
+
+            if (mesh.Shadow != null)
+            {
+                msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "ShVertices_Frame0")));
+                foreach (Vertex k in mesh.Shadow.Vertexs)
+                {
+                    msh.WriteLine(string.Format("{0}", k.pos.ToString()));
+                }
+                msh.WriteLine("");
+
+                msh.WriteLine(string.Format("[{0}]", GetLodName(lodNumber, "ShFaces")));
+                foreach (Face k in mesh.Shadow.Faces)
+                {
+                    msh.WriteLine(string.Format("{0} {1} {2}", k.v1, k.v2, k.v3));
+                }
+                msh.WriteLine("");
+
+            }
+
+        }
+        protected static string GetLodName(int number,string name)
+        {
+            if (number < 0)
+            {
+                return string.Format("{0}",name);
+            }
+            else
+            {
+                return string.Format("LOD{0}_{1}", number, name);
+            }
+
+        }
+
+        public static void CalculateTangentSpace(JVector P1, JVector P2, JVector P3, JVector UV1, JVector UV2, JVector UV3, ref JVector tangent, ref JVector bitangent)
+        {
+            /**/
+            JVector Edge1 = P2 - P1;
+            JVector Edge2 = P3 - P1;
+            JVector Edge1uv = UV2 - UV1;
+            JVector Edge2uv = UV3 - UV1;
+
+            float cp = Edge1uv.y * Edge2uv.x - Edge1uv.x * Edge2uv.y;
+            if (cp != 0.0f)
+            {
+                float mul = 1.0f / cp;
+                tangent = (Edge1.Mul2( -Edge2uv.y) + Edge2.Mul2(Edge1uv.y)).Mul2( mul);
+                bitangent = (Edge1.Mul2( -Edge2uv.x) + Edge2.Mul2(Edge1uv.x)).Mul2( mul);
+
+                tangent = tangent.Normalize();
+                bitangent = bitangent.Normalize();
+            }
+            /**
+            float x1 = v2.x - v1.x;
+			float x2 = v3.x - v1.x;
+			float y1 = v2.y - v1.y;
+			float y2 = v3.y - v1.y;
+			float z1 = v2.z - v1.z;
+			float z2 = v3.z - v1.z;
+	        
+			float s1 = w2.x - w1.x;
+			float s2 = w3.x - w1.x;
+			float t1 = w2.y - w1.y;
+			float t2 = w3.y - w1.y;
+
+			float r = 1.0F / (s1 * t2 - s2 * t1);
+			JVector sdir=new JVector((t2 * x1 - t1 * x2) * r, (t2 * y1 - t1 * y2) * r,
+					(t2 * z1 - t1 * z2) * r);
+            /**/
+
+
+        }
+    }
+}
